@@ -1,93 +1,76 @@
 from PySide6.QtWidgets import (
     QWidget,
     QVBoxLayout,
-    QHBoxLayout,
     QLabel,
-    QLineEdit,
-    QPushButton,
-    QTableWidget,
-    QTableWidgetItem,
-    QHeaderView,
-    QMessageBox
+    QFrame,
+    QGridLayout
 )
-from PySide6.QtCore import Qt
-from utils import processes
+from PySide6.QtCore import Qt, QTimer
+from utils import hardware
 
 
-class ProcessesPanel(QWidget):
+class HardwarePanel(QWidget):
     def __init__(self, config=None):
         super().__init__()
         self.config = config
         self.accent = "#66ffcc"
         self.build_ui()
-        self.load_processes()
+        self.update_stats()
+        self.timer = QTimer()
+        self.timer.timeout.connect(self.update_stats)
+        self.timer.start(1000)
 
     def build_ui(self):
         root = QVBoxLayout(self)
         root.setContentsMargins(20, 20, 20, 20)
-        root.setSpacing(12)
+        root.setSpacing(14)
 
-        title = QLabel("Processes")
-        title.setObjectName("procTitle")
+        title = QLabel("Hardware")
+        title.setObjectName("hwTitle")
         root.addWidget(title)
 
-        self.search = QLineEdit()
-        self.search.setPlaceholderText("Search process...")
-        self.search.textChanged.connect(self.filter_processes)
-        root.addWidget(self.search)
+        grid = QGridLayout()
+        grid.setSpacing(12)
 
-        self.table = QTableWidget()
-        self.table.setColumnCount(4)
-        self.table.setHorizontalHeaderLabels(["Name", "PID", "CPU %", "Memory %"])
-        self.table.horizontalHeader().setSectionResizeMode(QHeaderView.Stretch)
-        self.table.setSelectionBehavior(QTableWidget.SelectRows)
-        self.table.setEditTriggers(QTableWidget.NoEditTriggers)
-        root.addWidget(self.table)
+        self.cpu_label = self.make_card("CPU Usage")
+        self.ram_label = self.make_card("Memory Usage")
+        self.sys_label = self.make_card("System Info")
+        self.platform_label = self.make_card("Platform")
 
-        btn_row = QHBoxLayout()
-        self.refresh_btn = QPushButton("Refresh")
-        self.end_btn = QPushButton("End Process")
+        grid.addWidget(self.cpu_label._card, 0, 0)
+        grid.addWidget(self.ram_label._card, 0, 1)
+        grid.addWidget(self.sys_label._card, 1, 0)
+        grid.addWidget(self.platform_label._card, 1, 1)
 
-        self.refresh_btn.clicked.connect(self.load_processes)
-        self.end_btn.clicked.connect(self.kill_process)
-
-        btn_row.addWidget(self.refresh_btn)
-        btn_row.addStretch()
-        btn_row.addWidget(self.end_btn)
-        root.addLayout(btn_row)
-
+        root.addLayout(grid)
+        root.addStretch()
         self.apply_styles()
 
-    def load_processes(self):
-        data = processes.get_process_list()
-        self.table.setRowCount(len(data))
-        for row, proc in enumerate(data):
-            self.table.setItem(row, 0, QTableWidgetItem(proc["name"]))
-            self.table.setItem(row, 1, QTableWidgetItem(str(proc["pid"])))
-            self.table.setItem(row, 2, QTableWidgetItem(str(proc["cpu"])))
-            self.table.setItem(row, 3, QTableWidgetItem(f"{proc['memory']:.2f}"))
+    def make_card(self, title_text):
+        card = QFrame()
+        card.setObjectName("hwCard")
 
-    def filter_processes(self, text):
-        text = text.lower()
-        for row in range(self.table.rowCount()):
-            name_item = self.table.item(row, 0)
-            match = text in name_item.text().lower()
-            self.table.setRowHidden(row, not match)
+        layout = QVBoxLayout(card)
+        layout.setContentsMargins(14, 14, 14, 14)
 
-    def get_selected_pid(self):
-        row = self.table.currentRow()
-        if row < 0:
-            return None
-        return int(self.table.item(row, 1).text())
+        title = QLabel(title_text)
+        title.setObjectName("cardTitle")
 
-    def kill_process(self):
-        pid = self.get_selected_pid()
-        if not pid:
-            return
-        confirm = QMessageBox.question(self, "Kill Process", f"End PID {pid}?")
-        if confirm == QMessageBox.Yes:
-            processes.terminate_process(pid)
-            self.load_processes()
+        value = QLabel("Loading...")
+        value.setObjectName("cardValue")
+        value.setAlignment(Qt.AlignLeft)
+
+        layout.addWidget(title)
+        layout.addWidget(value)
+        value._card = card
+        return value
+
+    def update_stats(self):
+        self.cpu_label.setText(f"{hardware.get_cpu_usage()}%")
+        mem_used, mem_total, mem_percent = hardware.get_memory_usage()
+        self.ram_label.setText(f"{mem_percent:.2f}% ({mem_used} / {mem_total})")
+        self.sys_label.setText(hardware.get_system_info())
+        self.platform_label.setText(hardware.get_platform())
 
     def apply_styles(self):
         self.setStyleSheet(f"""
@@ -96,28 +79,22 @@ class ProcessesPanel(QWidget):
                 color: {self.accent};
                 font-family: Segoe UI, Arial;
             }}
-            QLabel#procTitle {{
+            QLabel#hwTitle {{
                 font-size: 20px;
                 font-weight: bold;
                 color: {self.accent};
             }}
-            QLineEdit {{
+            QFrame#hwCard {{
                 background-color: #161a21;
-                border-radius: 6px;
-                padding: 6px;
+                border-radius: 8px;
+            }}
+            QLabel#cardTitle {{
+                font-size: 13px;
+                color: #8fcfb5;
+            }}
+            QLabel#cardValue {{
+                font-size: 18px;
+                font-weight: bold;
                 color: {self.accent};
-            }}
-            QTableWidget {{
-                background-color: #161a21;
-                border: none;
-                gridline-color: #1e232c;
-            }}
-            QPushButton {{
-                background-color: #1a1f27;
-                border-radius: 6px;
-                padding: 6px 10px;
-            }}
-            QPushButton:hover {{
-                background-color: #222833;
             }}
         """)
