@@ -1,104 +1,93 @@
-import platform
-import psutil
-
 from PySide6.QtWidgets import (
     QWidget,
     QVBoxLayout,
+    QHBoxLayout,
     QLabel,
-    QFrame,
-    QGridLayout
+    QLineEdit,
+    QPushButton,
+    QTableWidget,
+    QTableWidgetItem,
+    QHeaderView,
+    QMessageBox
 )
-from PySide6.QtCore import Qt, QTimer
+from PySide6.QtCore import Qt
+from utils import processes
 
 
-class HardwarePanel(QWidget):
-    """
-    Hardware Panel
-    Displays basic system information:
-    CPU usage, RAM usage, OS info.
-    """
-
+class ProcessesPanel(QWidget):
     def __init__(self, config=None):
         super().__init__()
-
         self.config = config
         self.accent = "#66ffcc"
-
         self.build_ui()
-        self.update_stats()
-
-        # auto refresh every second
-        self.timer = QTimer()
-        self.timer.timeout.connect(self.update_stats)
-        self.timer.start(1000)
-
-    # ---------- UI ----------
+        self.load_processes()
 
     def build_ui(self):
         root = QVBoxLayout(self)
         root.setContentsMargins(20, 20, 20, 20)
-        root.setSpacing(14)
+        root.setSpacing(12)
 
-        title = QLabel("Hardware")
-        title.setObjectName("hwTitle")
+        title = QLabel("Processes")
+        title.setObjectName("procTitle")
         root.addWidget(title)
 
-        grid = QGridLayout()
-        grid.setSpacing(12)
+        self.search = QLineEdit()
+        self.search.setPlaceholderText("Search process...")
+        self.search.textChanged.connect(self.filter_processes)
+        root.addWidget(self.search)
 
-        # cards
-        self.cpu_label = self.make_card("CPU Usage")
-        self.ram_label = self.make_card("Memory Usage")
-        self.sys_label = self.make_card("System Info")
-        self.platform_label = self.make_card("Platform")
+        self.table = QTableWidget()
+        self.table.setColumnCount(4)
+        self.table.setHorizontalHeaderLabels(["Name", "PID", "CPU %", "Memory %"])
+        self.table.horizontalHeader().setSectionResizeMode(QHeaderView.Stretch)
+        self.table.setSelectionBehavior(QTableWidget.SelectRows)
+        self.table.setEditTriggers(QTableWidget.NoEditTriggers)
+        root.addWidget(self.table)
 
-        grid.addWidget(self.cpu_label.parentWidget(), 0, 0)
-        grid.addWidget(self.ram_label.parentWidget(), 0, 1)
-        grid.addWidget(self.sys_label.parentWidget(), 1, 0)
-        grid.addWidget(self.platform_label.parentWidget(), 1, 1)
+        btn_row = QHBoxLayout()
+        self.refresh_btn = QPushButton("Refresh")
+        self.end_btn = QPushButton("End Process")
 
-        root.addLayout(grid)
-        root.addStretch()
+        self.refresh_btn.clicked.connect(self.load_processes)
+        self.end_btn.clicked.connect(self.kill_process)
+
+        btn_row.addWidget(self.refresh_btn)
+        btn_row.addStretch()
+        btn_row.addWidget(self.end_btn)
+        root.addLayout(btn_row)
 
         self.apply_styles()
 
-    def make_card(self, title_text):
-        card = QFrame()
-        card.setObjectName("hwCard")
+    def load_processes(self):
+        data = processes.get_process_list()
+        self.table.setRowCount(len(data))
+        for row, proc in enumerate(data):
+            self.table.setItem(row, 0, QTableWidgetItem(proc["name"]))
+            self.table.setItem(row, 1, QTableWidgetItem(str(proc["pid"])))
+            self.table.setItem(row, 2, QTableWidgetItem(str(proc["cpu"])))
+            self.table.setItem(row, 3, QTableWidgetItem(f"{proc['memory']:.2f}"))
 
-        layout = QVBoxLayout(card)
-        layout.setContentsMargins(14, 14, 14, 14)
+    def filter_processes(self, text):
+        text = text.lower()
+        for row in range(self.table.rowCount()):
+            name_item = self.table.item(row, 0)
+            match = text in name_item.text().lower()
+            self.table.setRowHidden(row, not match)
 
-        title = QLabel(title_text)
-        title.setObjectName("cardTitle")
+    def get_selected_pid(self):
+        row = self.table.currentRow()
+        if row < 0:
+            return None
+        return int(self.table.item(row, 1).text())
 
-        value = QLabel("Loading...")
-        value.setObjectName("cardValue")
-        value.setAlignment(Qt.AlignLeft)
-
-        layout.addWidget(title)
-        layout.addWidget(value)
-
-        # return the value label but keep card container
-        value._card = card
-        return value
-
-    # ---------- Data ----------
-
-    def update_stats(self):
-        cpu = psutil.cpu_percent()
-        mem = psutil.virtual_memory()
-
-        self.cpu_label.setText(f"{cpu}%")
-        self.ram_label.setText(f"{mem.percent}% ({self.bytes_to_gb(mem.used)} / {self.bytes_to_gb(mem.total)})")
-
-        self.sys_label.setText(platform.system() + " " + platform.release())
-        self.platform_label.setText(platform.machine())
-
-    def bytes_to_gb(self, b):
-        return f"{b / (1024**3):.1f} GB"
-
-    # ---------- Styles ----------
+    def kill_process(self):
+        pid = self.get_selected_pid()
+        if not pid:
+            return
+        confirm = QMessageBox.question(self, "Kill Process", f"End PID {pid}?")
+        if confirm == QMessageBox.Yes:
+            processes.terminate_process(pid)
+            self.load_processes()
 
     def apply_styles(self):
         self.setStyleSheet(f"""
@@ -107,26 +96,28 @@ class HardwarePanel(QWidget):
                 color: {self.accent};
                 font-family: Segoe UI, Arial;
             }}
-
-            QLabel#hwTitle {{
+            QLabel#procTitle {{
                 font-size: 20px;
                 font-weight: bold;
                 color: {self.accent};
             }}
-
-            QFrame#hwCard {{
+            QLineEdit {{
                 background-color: #161a21;
-                border-radius: 8px;
-            }}
-
-            QLabel#cardTitle {{
-                font-size: 13px;
-                color: #8fcfb5;
-            }}
-
-            QLabel#cardValue {{
-                font-size: 18px;
-                font-weight: bold;
+                border-radius: 6px;
+                padding: 6px;
                 color: {self.accent};
+            }}
+            QTableWidget {{
+                background-color: #161a21;
+                border: none;
+                gridline-color: #1e232c;
+            }}
+            QPushButton {{
+                background-color: #1a1f27;
+                border-radius: 6px;
+                padding: 6px 10px;
+            }}
+            QPushButton:hover {{
+                background-color: #222833;
             }}
         """)
